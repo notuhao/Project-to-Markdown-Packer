@@ -54,3 +54,7 @@
 ## ✍️ 作者
 
 **末伏之夜(notuhao)**
+
+## 星标情况
+
+[![Star History Chart](https://api.star-history.com/svg?repos=notuhao/Project-to-Markdown-Packer&type=Date)](https://www.star-history.com/#notuhao/Project-to-Markdown-Packer&Date)
