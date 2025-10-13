@@ -9,6 +9,11 @@ from tkinter import filedialog, messagebox, Toplevel, Checkbutton, BooleanVar, B
 
 CONFIG_DIR = 'file_type_configs'
 
+# 新增配置项：是否允许用户选择输出目录
+# 如果设为 True，程序会弹窗让用户选择输出目录
+# 如果设为 False，则按照原有逻辑自动选择输出目录
+ALLOW_CHOOSE_OUTPUT_DIR = True  # 默认为True，允许用户选择输出目录
+
 # 预设的可供选择的、包含其内容的文本文件后缀名
 # 可以根据需要增删此列表
 CANDIDATE_EXTENSIONS = [
@@ -17,7 +22,7 @@ CANDIDATE_EXTENSIONS = [
     '.json', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf',
     '.sh', '.bat', '.ps1', '.sql', '.r', '.swift', '.kt', '.kts',
     '.md', '.txt', '.rst', 'LICENSE', 'Dockerfile', '.vue', '.env', '.gitattributes',
-    '.gitignore', '.j2'
+    '.gitignore', '.j2', '.prisma'
 ]
 
 # 文件后缀名到 Markdown 语言标识符的映射，用于语法高亮
@@ -65,7 +70,8 @@ LANGUAGE_MAP = {
     '.env': 'ini',
     '.gitattributes': 'ini',
     '.gitignore': 'ini',
-    '.j2': 'markdown'
+    '.j2': 'markdown',
+    '.prisma': 'text'
 }
 
 # 在生成文件树时要忽略的目录和文件
@@ -227,7 +233,12 @@ def generate_tree_structure(directory):
     tree_lines = [f"📁 {os.path.basename(directory)}/"]
 
     def build_tree(current_path, prefix=""):
-        items = sorted(os.listdir(current_path))
+        try:
+            items = sorted(os.listdir(current_path))
+        except (PermissionError, OSError) as e:
+            tree_lines.append(f"{prefix}└── [权限不足，无法访问: {os.path.basename(current_path)}]")
+            return
+
         pointers = ['├── '] * (len(items) - 1) + ['└── ']
 
         for pointer, item in zip(pointers, items):
@@ -239,7 +250,10 @@ def generate_tree_structure(directory):
 
             if os.path.isdir(path):
                 extension = '│   ' if pointer == '├── ' else '    '
-                build_tree(path, prefix + extension)
+                try:
+                    build_tree(path, prefix + extension)
+                except (PermissionError, OSError) as e:
+                    tree_lines.append(f"{prefix}{extension}└── [权限不足，无法访问: {item}]")
 
     build_tree(directory)
     return "\n".join(tree_lines)
@@ -268,7 +282,21 @@ def main_process():
 
     # 3. 准备输出文件
     folder_name = os.path.basename(folder_path)
-    output_md_path = os.path.join(os.path.dirname(folder_path), f"{folder_name}.md")
+
+    # 根据配置项决定输出路径的获取方式
+    if ALLOW_CHOOSE_OUTPUT_DIR:
+        # 允许用户选择输出目录
+        output_dir = filedialog.askdirectory(
+            title="请选择Markdown文件的输出目录",
+            initialdir=os.path.dirname(folder_path)  # 默认打开项目文件夹的上级目录
+        )
+        if not output_dir:
+            messagebox.showinfo("提示", "您没有选择输出目录，操作已取消。")
+            return
+        output_md_path = os.path.join(output_dir, f"{folder_name}.md")
+    else:
+        # 按照原有逻辑自动选择输出目录
+        output_md_path = os.path.join(os.path.dirname(folder_path), f"{folder_name}.md")
 
     try:
         with open(output_md_path, 'w', encoding='utf-8') as md_file:
@@ -289,6 +317,13 @@ def main_process():
             for dirpath, _, filenames in os.walk(folder_path):
                 # 忽略指定目录
                 if any(part in IGNORED_ITEMS for part in dirpath.split(os.sep)):
+                    continue
+
+                # 尝试访问目录，如果权限不足则跳过
+                try:
+                    # 测试是否可访问该目录
+                    os.listdir(dirpath)
+                except (PermissionError, OSError) as e:
                     continue
 
                 relative_path = os.path.relpath(dirpath, folder_path)
@@ -312,17 +347,11 @@ def main_process():
                         try:
                             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                                 md_file.write(f.read())
+                        except (PermissionError, OSError) as e:
+                            md_file.write(f"# 错误: 无法读取文件内容. 原因: {e}")
                         except Exception as e:
-                            md_file.write(f"错误: 无法读取文件内容. 原因: {e}")
+                            md_file.write(f"# 错误: 读取文件时发生意外错误. 原因: {e}")
                         md_file.write("\n```\n\n")
-                    # 如果是可识别但未被选中的文本文件 或 其他（二进制）文件：不显示内容
-                    # elif extension.lower() in CANDIDATE_EXTENSIONS:
-                        # md_file.write("> *[文件内容未根据用户选择包含]*\n\n")
-                    # 其他（二进制）文件
-                    # else:
-                        # md_file.write("> *[非文本文件，内容不予显示]*\n\n")
-
-            # md_file.write("---\n\n*文件夹内容结束。*\n")
 
         messagebox.showinfo("成功", f"Markdown 文件已成功生成！\n\n路径: {output_md_path}")
 
