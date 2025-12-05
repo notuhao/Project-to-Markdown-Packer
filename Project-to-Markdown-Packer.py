@@ -2,362 +2,460 @@
 # 末伏之夜 出品
 import os
 import json
+import fnmatch
 import tkinter as tk
-from tkinter import filedialog, messagebox, Toplevel, Checkbutton, BooleanVar, Button, Frame, Label
+from tkinter import filedialog, messagebox, Toplevel, BooleanVar, Button, Frame, Label, Canvas, Scrollbar, LabelFrame, \
+    Radiobutton, IntVar
 
 # --- 配置区 ---
 
 CONFIG_DIR = 'file_type_configs'
 
-# 新增配置项：是否允许用户选择输出目录
-# 如果设为 True，程序会弹窗让用户选择输出目录
-# 如果设为 False，则按照原有逻辑自动选择输出目录
-ALLOW_CHOOSE_OUTPUT_DIR = True  # 默认为True，允许用户选择输出目录
+# 1. 是否遵循 .gitignore 规则
+USE_GITIGNORE_CONFIG = True
 
-# 预设的可供选择的、包含其内容的文本文件后缀名
-# 可以根据需要增删此列表
-CANDIDATE_EXTENSIONS = [
-    '.py', '.pyw', '.java', '.c', '.h', '.cpp', '.hpp', '.cs', '.go',
-    '.js', '.ts', '.jsx', '.tsx', '.html', '.htm', '.css', '.scss', '.sass',
-    '.json', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf',
-    '.sh', '.bat', '.ps1', '.sql', '.r', '.swift', '.kt', '.kts',
-    '.md', '.txt', '.rst', 'LICENSE', 'Dockerfile', '.vue', '.env', '.gitattributes',
-    '.gitignore', '.j2', '.prisma'
-]
+# 2. 单个文件最大大小限制 (KB)
+MAX_FILE_SIZE_KB = 500
 
-# 文件后缀名到 Markdown 语言标识符的映射，用于语法高亮
-LANGUAGE_MAP = {
-    '.py': 'python',
-    '.pyw': 'python',
-    '.java': 'java',
-    '.c': 'c',
-    '.h': 'c',
-    '.cpp': 'cpp',
-    '.hpp': 'cpp',
-    '.cs': 'csharp',
-    '.go': 'go',
-    '.js': 'javascript',
-    '.ts': 'typescript',
-    '.jsx': 'jsx',
-    '.tsx': 'tsx',
-    '.html': 'html',
-    '.htm': 'html',
-    '.css': 'css',
-    '.scss': 'scss',
-    '.sass': 'sass',
-    '.json': 'json',
-    '.xml': 'xml',
-    '.yaml': 'yaml',
-    '.yml': 'yaml',
-    '.toml': 'toml',
-    '.ini': 'ini',
-    '.cfg': 'ini',
-    '.conf': 'ini',
-    '.sh': 'shell',
-    '.bat': 'batch',
-    '.ps1': 'powershell',
-    '.sql': 'sql',
-    '.r': 'r',
-    '.swift': 'swift',
-    '.kt': 'kotlin',
-    '.kts': 'kotlin',
-    '.md': 'markdown',
-    '.txt': 'text',
-    '.rst': 'rst',
-    'LICENSE': 'text',
-    'Dockerfile': 'dockerfile',
-    '.vue': 'html',
-    '.env': 'ini',
-    '.gitattributes': 'ini',
-    '.gitignore': 'ini',
-    '.j2': 'markdown',
-    '.prisma': 'text'
+# --- 后缀名分类结构 (UI显示用) ---
+EXTENSION_CATEGORIES = {
+    "文档": [
+        '.md', '.txt', '.rst', 'LICENSE'
+    ],
+    "配置 & 开发运维": [
+        '.sh', '.bat', '.ps1', 'Dockerfile', 'Makefile', '.gradle', '.properties', '.conf', '.cfg',
+        '.json', '.xml', '.yaml', '.yml', '.toml', '.ini', '.env', '.example', '.gitignore'
+    ],
+    "Python & Data": [
+        '.py', '.pyw', '.ipynb',
+    ],
+    "网页开发": [
+        '.html', '.htm', '.css', '.scss', '.sass', '.less',
+        '.js', '.ts', '.jsx', '.tsx', '.vue', '.svelte'
+    ],
+    "后端 / 系统": [
+        '.java', '.c', '.h', '.cpp', '.hpp', '.cs', '.go', '.rs', '.php', '.rb', '.lua', '.pl'
+    ],
+    "Godot引擎": [
+        '.gd', '.tscn', '.tres', '.gdshader', 'project.godot', '.cs'
+    ],
+    "移动应用": [
+        '.swift', '.kt', '.kts', '.dart'
+    ],
+    "数据库": [
+        '.sql', '.prisma'
+    ],
+    "其他": [
+        '.sol', '.v', '.sv', '.clj', '.ex', '.exs'
+    ]
 }
 
-# 在生成文件树时要忽略的目录和文件
-IGNORED_ITEMS = {'.git', '__pycache__', '.vscode', 'node_modules', '.idea', '.DS_Store'}
+# --- 语言映射表 (用于Markdown高亮) ---
+LANGUAGE_MAP = {
+    # Python
+    '.py': 'python', '.pyw': 'python', '.ipynb': 'json',
+    # Java/Kotlin
+    '.java': 'java', '.kt': 'kotlin', '.kts': 'kotlin', '.gradle': 'groovy', '.properties': 'ini',
+    # C/C++
+    '.c': 'c', '.h': 'c', '.cpp': 'cpp', '.hpp': 'cpp',
+    # C#
+    '.cs': 'csharp',
+    # Web
+    '.js': 'javascript', '.ts': 'typescript', '.jsx': 'jsx', '.tsx': 'tsx',
+    '.html': 'html', '.htm': 'html', '.css': 'css', '.scss': 'scss', '.sass': 'sass', '.less': 'less',
+    '.vue': 'html', '.svelte': 'html',
+    # Godot
+    '.gd': 'gdscript', '.tscn': 'ini', '.tres': 'ini', '.gdshader': 'glsl', 'project.godot': 'ini',
+    # Go/Rust
+    '.go': 'go', '.rs': 'rust',
+    # PHP
+    '.php': 'php',
+    # Ruby/Lua/Perl
+    '.rb': 'ruby', '.lua': 'lua', '.pl': 'perl',
+    # Mobile
+    '.swift': 'swift', '.dart': 'dart',
+    # Config/Data
+    '.json': 'json', '.xml': 'xml', '.yaml': 'yaml', '.yml': 'yaml',
+    '.toml': 'toml', '.ini': 'ini', '.cfg': 'ini', '.conf': 'ini', '.env': 'ini', '.example': 'ini',
+    # Shell
+    '.sh': 'shell', '.bat': 'batch', '.ps1': 'powershell',
+    '.gitattributes': 'ini', '.gitignore': 'ini', 'Dockerfile': 'dockerfile', 'Makefile': 'makefile',
+    # SQL
+    '.sql': 'sql', '.prisma': 'text',
+    # Docs
+    '.md': 'markdown', '.txt': 'text', '.rst': 'rst', 'LICENSE': 'text',
+    # Others
+    '.sol': 'solidity', '.v': 'verilog', '.sv': 'systemverilog',
+    '.clj': 'clojure', '.ex': 'elixir', '.exs': 'elixir'
+}
+
+IGNORED_ITEMS_ALWAYS = {'.git', '__pycache__', '.vscode', 'node_modules', '.idea', '.DS_Store', 'dist', 'build', 'venv',
+                        '.venv', 'target', '.godot', '.import'}
 
 
-# --- 功能函数 ---
+# --- 辅助类与函数 ---
 
-def select_file_types():
-    """
-    创建一个窗口让用户选择要包含内容的文件类型。
-    返回一个包含所选后缀名的列表，如果用户取消则返回 None。
-    """
+class GitIgnoreMatcher:
+    def __init__(self, root_dir):
+        self.root_dir = root_dir
+        self.patterns = []
+        if USE_GITIGNORE_CONFIG:
+            self.load_gitignore()
+
+    def load_gitignore(self):
+        gitignore_path = os.path.join(self.root_dir, '.gitignore')
+        if not os.path.exists(gitignore_path):
+            return
+        try:
+            with open(gitignore_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    self.patterns.append(line)
+        except Exception:
+            pass
+
+    def is_ignored(self, file_path):
+        if not self.patterns:
+            return False
+        rel_path = os.path.relpath(file_path, self.root_dir)
+        rel_path_unix = rel_path.replace(os.sep, '/')
+        filename = os.path.basename(file_path)
+        for pattern in self.patterns:
+            if pattern.endswith('/'):
+                norm_pattern = pattern.rstrip('/')
+                if rel_path_unix.startswith(pattern) or f"/{norm_pattern}/" in f"/{rel_path_unix}":
+                    return True
+            if fnmatch.fnmatch(filename, pattern):
+                return True
+            if fnmatch.fnmatch(rel_path_unix, pattern):
+                return True
+        return False
+
+
+def center_window(window, width=None, height=None):
+    window.update_idletasks()
+    w = width or window.winfo_width()
+    h = height or window.winfo_height()
+    ws = window.winfo_screenwidth()
+    hs = window.winfo_screenheight()
+    x = (ws / 2) - (w / 2)
+    y = (hs / 2) - (h / 2)
+    window.geometry(f'+{int(x)}+{int(y)}')
+
+
+def select_options():
+    """配置窗口：选择文件类型及输出路径"""
     selector_window = Toplevel()
-    selector_window.title("请选择要包含内容的文件类型")
-
-    # 保证窗口在最前
+    selector_window.title("导出配置")
+    selector_window.geometry("800x600")
+    center_window(selector_window, 800, 600)
     selector_window.attributes('-topmost', True)
 
-    vars = {}
-    for ext in CANDIDATE_EXTENSIONS:
-        vars[ext] = BooleanVar(value=True)  # 默认全选
+    # 变量存储
+    ext_vars = {}  # { '.py': BooleanVar, ... }
 
-    def toggle_all(select):
-        for var in vars.values():
-            var.set(select)
+    # 初始化所有变量
+    for cat, exts in EXTENSION_CATEGORIES.items():
+        for ext in exts:
+            ext_vars[ext] = BooleanVar(value=True)
 
-    # 创建复选框
-    frame = Frame(selector_window, padx=10, pady=10)
-    frame.pack(fill="both", expand=True)
-    Label(frame, text="选择要读取并保存内容的文件类型:").grid(row=0, column=0, columnspan=4, sticky='w')
+    # --- 布局结构 ---
+    # 1. 顶部：预设管理
+    top_frame = Frame(selector_window, padx=10, pady=10, bg="#e0e0e0")
+    top_frame.pack(side="top", fill="x")
 
-    # 将选项分多列展示
-    num_columns = 4
-    for i, ext in enumerate(CANDIDATE_EXTENSIONS):
-        row = (i // num_columns) + 1
-        col = i % num_columns
-        cb = Checkbutton(frame, text=ext, variable=vars[ext])
-        cb.grid(row=row, column=col, sticky='w', padx=5, pady=2)
+    # 2. 底部：输出选项 + 开始按钮
+    bottom_frame = Frame(selector_window, padx=15, pady=15, bg="#f0f0f0", bd=1, relief="sunken")
+    bottom_frame.pack(side="bottom", fill="x")
 
-    # --- 保存/读取预设配置UI部分 ---
-    config_frame = Frame(selector_window, padx=10, pady=10)
-    config_frame.pack(fill="x", expand=True)
+    # 3. 中间：滚动区域（存放复选框）
+    container_frame = Frame(selector_window)
+    container_frame.pack(side="top", fill="both", expand=True, padx=10, pady=5)
 
-    # 加载预设的下拉菜单
-    Label(config_frame, text="加载预设:").pack(side="left", padx=(0, 5))
+    canvas = Canvas(container_frame, highlightthickness=0)
+    scrollbar = Scrollbar(container_frame, orient="vertical", command=canvas.yview)
+    scrollable_frame = Frame(canvas)
 
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+    )
+
+    # 鼠标滚轮绑定
+    def on_mousewheel(event):
+        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    canvas.bind_all("<MouseWheel>", on_mousewheel)
+    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    # --- 1. 顶部预设功能 ---
+    Label(top_frame, text="预设配置:", bg="#e0e0e0").pack(side="left")
     preset_var = tk.StringVar(selector_window)
-    presets_menu = tk.OptionMenu(config_frame, preset_var, "选择一个预设...")
-    presets_menu.pack(side="left", fill="x", expand=True)
+    presets_menu = tk.OptionMenu(top_frame, preset_var, "选择预设...")
+    presets_menu.pack(side="left", padx=5)
 
-    # 保存预设的输入框和按钮
-    Label(config_frame, text="另存为:").pack(side="left", padx=(10, 5))
+    preset_name_entry = tk.Entry(top_frame, width=15)
+    preset_name_entry.pack(side="left", padx=5)
 
-    preset_name_entry = tk.Entry(config_frame)
-    preset_name_entry.pack(side="left", fill="x", expand=True)
-
-    save_btn = Button(config_frame, text="保存")
-    save_btn.pack(side="left", padx=5)
-    # --- 保存/读取预设配置UI部分结束 ---
-
-    # 按钮区域
-    btn_frame = Frame(selector_window, padx=10, pady=5)
-    btn_frame.pack(fill="x")
-    Button(btn_frame, text="全选", command=lambda: toggle_all(True)).pack(side="left", padx=5)
-    Button(btn_frame, text="全不选", command=lambda: toggle_all(False)).pack(side="left", padx=5)
-
-    selected_extensions = None
-
-    # 保存预设辅助函数
     def get_presets():
-        """扫描配置目录并返回预设名称列表"""
+        if not os.path.exists(CONFIG_DIR): return []
+        return [os.path.splitext(f)[0] for f in os.listdir(CONFIG_DIR) if f.endswith('.json')]
+
+    def load_preset(name):
         try:
-            # 仅列出目录中存在的 .json 文件名（不含后缀）
-            return [os.path.splitext(f)[0] for f in os.listdir(CONFIG_DIR) if f.endswith('.json')]
-        except FileNotFoundError:
-            return []
-
-    def refresh_presets_menu():
-        """刷新下拉菜单中的预设列表"""
-        presets = get_presets()
-        menu = presets_menu["menu"]
-        menu.delete(0, "end")
-        if not presets:
-            menu.add_command(label="无可用预设", state="disabled")
-        else:
-            for preset in presets:
-                # 当菜单项被点击时，调用 load_preset 函数
-                menu.add_command(label=preset, command=lambda p=preset: load_preset(p))
-        preset_var.set("选择一个预设...")
-
-    def load_preset(preset_name):
-        """根据名称加载预设并更新复选框"""
-        filepath = os.path.join(CONFIG_DIR, f"{preset_name}.json")
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                selected_extensions = json.load(f)
-
-            # 更新所有复选框的状态
-            for ext, var in vars.items():
-                if ext in selected_extensions:
-                    var.set(True)
-                else:
-                    var.set(False)
-
+            with open(os.path.join(CONFIG_DIR, f"{name}.json"), 'r') as f:
+                saved = json.load(f)
+            # 先清空
+            for v in ext_vars.values(): v.set(False)
+            # 再选中
+            for ext in saved:
+                if ext in ext_vars: ext_vars[ext].set(True)
             preset_name_entry.delete(0, tk.END)
-            preset_name_entry.insert(0, preset_name)  # 将加载的预设名填入输入框，方便覆盖保存
-
+            preset_name_entry.insert(0, name)
         except Exception as e:
-            messagebox.showerror("错误", f"加载预设 '{preset_name}' 失败: {e}")
+            messagebox.showerror("错误", str(e))
 
     def save_preset():
-        """保存当前勾选状态为一个新的预设文件"""
-        preset_name = preset_name_entry.get().strip()
-        if not preset_name:
-            messagebox.showwarning("提示", "请输入预设名称后再保存。")
+        name = preset_name_entry.get().strip()
+        if not name: return messagebox.showwarning("警告", "请输入预设名称")
+        selected = [ext for ext, v in ext_vars.items() if v.get()]
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(os.path.join(CONFIG_DIR, f"{name}.json"), 'w') as f:
+            json.dump(selected, f)
+        messagebox.showinfo("成功", "预设已保存")
+        refresh_menu()
+
+    save_btn = Button(top_frame, text="保存当前配置", command=save_preset)
+    save_btn.pack(side="left")
+
+    def refresh_menu():
+        menu = presets_menu["menu"]
+        menu.delete(0, "end")
+        presets = get_presets()
+        if not presets:
+            menu.add_command(label="无预设", state="disabled")
+        else:
+            for p in presets:
+                menu.add_command(label=p, command=lambda x=p: load_preset(x))
+        preset_var.set("加载预设...")
+
+    refresh_menu()
+
+    # --- 3. 中间分类复选框生成 ---
+
+    def toggle_category(category_name, state):
+        exts = EXTENSION_CATEGORIES[category_name]
+        for ext in exts:
+            ext_vars[ext].set(state)
+
+    for category, extensions in EXTENSION_CATEGORIES.items():
+        # 创建一个带标题的框 (LabelFrame)
+        cat_frame = LabelFrame(scrollable_frame, text=f" {category} ", font=("Arial", 10, "bold"), padx=10, pady=5)
+        cat_frame.pack(fill="x", expand=True, padx=5, pady=5)
+
+        # 顶部工具栏（全选/全不选）
+        tool_frame = Frame(cat_frame)
+        tool_frame.pack(anchor="w", fill="x", pady=(0, 5))
+
+        Button(tool_frame, text="全选", font=("Arial", 8), width=6,
+               command=lambda c=category: toggle_category(c, True)).pack(side="left", padx=2)
+        Button(tool_frame, text="清空", font=("Arial", 8), width=6,
+               command=lambda c=category: toggle_category(c, False)).pack(side="left", padx=2)
+
+        # 网格布局复选框
+        grid_frame = Frame(cat_frame)
+        grid_frame.pack(fill="x")
+
+        cols = 5
+        for i, ext in enumerate(extensions):
+            r, c = divmod(i, cols)
+            cb = tk.Checkbutton(grid_frame, text=ext, variable=ext_vars[ext])
+            cb.grid(row=r, column=c, sticky="w", padx=5)
+
+    # --- 2. 底部输出选项 ---
+
+    # 输出模式变量: 0 = 原目录, 1 = 自定义目录
+    output_mode_var = IntVar(value=0)
+
+    opt_label = Label(bottom_frame, text="输出位置:", font=("Arial", 10, "bold"), bg="#f0f0f0")
+    opt_label.pack(side="left", padx=(0, 10))
+
+    rb1 = Radiobutton(bottom_frame, text="项目根目录 (默认)", variable=output_mode_var, value=0, bg="#f0f0f0")
+    rb1.pack(side="left", padx=5)
+
+    rb2 = Radiobutton(bottom_frame, text="自定义目录...", variable=output_mode_var, value=1, bg="#f0f0f0")
+    rb2.pack(side="left", padx=5)
+
+    # 全局全选/全不选
+    def global_toggle(state):
+        for v in ext_vars.values():
+            v.set(state)
+
+    global_btn_frame = Frame(bottom_frame, bg="#f0f0f0")
+    global_btn_frame.pack(side="left", padx=30)
+    Button(global_btn_frame, text="所有全选", command=lambda: global_toggle(True)).pack(side="left")
+    Button(global_btn_frame, text="所有清空", command=lambda: global_toggle(False)).pack(side="left", padx=5)
+
+    # 确定按钮
+    result = None
+
+    def on_confirm():
+        nonlocal result
+        selected = [ext for ext, var in ext_vars.items() if var.get()]
+        if not selected:
+            messagebox.showwarning("提示", "请至少选择一种文件类型")
             return
 
-        # 获取当前所有勾选的项
-        current_selection = [ext for ext, var in vars.items() if var.get()]
-        filepath = os.path.join(CONFIG_DIR, f"{preset_name}.json")
-
-        try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(current_selection, f, indent=4)
-
-            messagebox.showinfo("成功", f"预设 '{preset_name}' 已成功保存。")
-            refresh_presets_menu()  # 保存后立即刷新下拉列表
-
-        except Exception as e:
-            messagebox.showerror("错误", f"保存预设失败: {e}")
-
-    # 将 save_preset 函数绑定到保存按钮
-    save_btn.config(command=save_preset)
-
-    # 初始化时刷新一次预设菜单
-    refresh_presets_menu()
-
-    selected_extensions = None
-
-    def on_ok():
-        nonlocal selected_extensions
-        selected_extensions = [ext for ext, var in vars.items() if var.get()]
+        result = {
+            "extensions": selected,
+            "output_custom": (output_mode_var.get() == 1)
+        }
+        canvas.unbind_all("<MouseWheel>")
         selector_window.destroy()
 
-    Button(btn_frame, text="确定", command=on_ok, width=15).pack(side="right", padx=5)
+    Button(bottom_frame, text="开始生成 Markdown", command=on_confirm,
+           bg="#007bff", fg="white", font=("Arial", 11, "bold"), padx=20).pack(side="right")
 
-    # 等待窗口关闭
-    selector_window.transient()
     selector_window.wait_window()
-
-    return selected_extensions
+    return result
 
 
 def generate_tree_structure(directory):
-    """
-    生成目录的树状结构字符串。
-    """
     tree_lines = [f"📁 {os.path.basename(directory)}/"]
 
     def build_tree(current_path, prefix=""):
         try:
             items = sorted(os.listdir(current_path))
-        except (PermissionError, OSError) as e:
-            tree_lines.append(f"{prefix}└── [权限不足，无法访问: {os.path.basename(current_path)}]")
+        except OSError:
+            tree_lines.append(f"{prefix}└── [无法访问]")
             return
-
-        pointers = ['├── '] * (len(items) - 1) + ['└── ']
-
-        for pointer, item in zip(pointers, items):
-            if item in IGNORED_ITEMS:
-                continue
-
+        filtered_items = [item for item in items if item not in IGNORED_ITEMS_ALWAYS]
+        count = len(filtered_items)
+        for i, item in enumerate(filtered_items):
             path = os.path.join(current_path, item)
+            is_last = (i == count - 1)
+            pointer = '└── ' if is_last else '├── '
             tree_lines.append(f"{prefix}{pointer}{item}")
-
             if os.path.isdir(path):
-                extension = '│   ' if pointer == '├── ' else '    '
-                try:
-                    build_tree(path, prefix + extension)
-                except (PermissionError, OSError) as e:
-                    tree_lines.append(f"{prefix}{extension}└── [权限不足，无法访问: {item}]")
+                extension = '    ' if is_last else '│   '
+                build_tree(path, prefix + extension)
 
     build_tree(directory)
     return "\n".join(tree_lines)
 
 
 def main_process():
-    """
-    主流程函数。
-    """
     os.makedirs(CONFIG_DIR, exist_ok=True)
-
     root = tk.Tk()
     root.withdraw()
 
-    # 1. 让用户选择文件类型
-    selected_types = select_file_types()
-    if selected_types is None:
-        messagebox.showinfo("提示", "操作已取消。")
+    # 1. 弹出配置窗口
+    config = select_options()
+    if config is None:
         return
 
-    # 2. 让用户选择文件夹
-    folder_path = filedialog.askdirectory(title="请选择一个项目文件夹")
+    selected_types = config['extensions']
+    use_custom_output = config['output_custom']
+
+    # 2. 选择项目文件夹
+    folder_path = filedialog.askdirectory(title="请选择要转换的项目根目录")
     if not folder_path:
-        messagebox.showinfo("提示", "您没有选择任何文件夹。")
         return
 
-    # 3. 准备输出文件
     folder_name = os.path.basename(folder_path)
 
-    # 根据配置项决定输出路径的获取方式
-    if ALLOW_CHOOSE_OUTPUT_DIR:
-        # 允许用户选择输出目录
-        output_dir = filedialog.askdirectory(
-            title="请选择Markdown文件的输出目录",
-            initialdir=os.path.dirname(folder_path)  # 默认打开项目文件夹的上级目录
-        )
-        if not output_dir:
-            messagebox.showinfo("提示", "您没有选择输出目录，操作已取消。")
-            return
-        output_md_path = os.path.join(output_dir, f"{folder_name}.md")
+    # 3. 确定输出路径
+    if use_custom_output:
+        output_dir = filedialog.askdirectory(title="选择 Markdown 保存位置")
+        if not output_dir: return
+        output_md_path = os.path.join(output_dir, f"{folder_name}_project.md")
     else:
-        # 按照原有逻辑自动选择输出目录
+        # 输出到项目根目录的上一级，或者项目根目录内部（这里保持原逻辑：输出到项目同级目录避免污染）
+        # 如果你想输出到项目内部，改为 os.path.join(folder_path, ...)
         output_md_path = os.path.join(os.path.dirname(folder_path), f"{folder_name}.md")
+
+    git_matcher = GitIgnoreMatcher(folder_path)
 
     try:
         with open(output_md_path, 'w', encoding='utf-8') as md_file:
-            # 写入主标题
             md_file.write(f"# 项目概览: {folder_name}\n\n")
+            if USE_GITIGNORE_CONFIG:
+                md_file.write("> 💡 注：已启用 .gitignore 过滤，忽略文件的具体内容未包含在内。\n\n")
 
-            # 4. 写入文件结构树
-            md_file.write("## 1. 项目文件结构\n\n")
-            md_file.write("```\n")
-            tree_structure = generate_tree_structure(folder_path)
-            md_file.write(tree_structure)
-            md_file.write("\n```\n\n")
+            md_file.write("## 1. 项目文件结构\n\n```text\n")
+            md_file.write(generate_tree_structure(folder_path))
+            md_file.write("\n```\n\n---\n\n")
 
-            md_file.write("---\n\n")
             md_file.write("## 2. 文件内容详情\n\n")
+            file_count = 0
+            skipped_count = 0
 
-            # 5. 遍历文件夹，写入选定文件内容
-            for dirpath, _, filenames in os.walk(folder_path):
-                # 忽略指定目录
-                if any(part in IGNORED_ITEMS for part in dirpath.split(os.sep)):
+            for dirpath, dirnames, filenames in os.walk(folder_path):
+                # 过滤文件夹
+                dirnames[:] = [d for d in dirnames if d not in IGNORED_ITEMS_ALWAYS]
+                # GitIgnore 过滤文件夹层级
+                if USE_GITIGNORE_CONFIG and git_matcher.is_ignored(dirpath):
+                    dirnames[:] = []  # 如果文件夹被忽略，不进入子目录
                     continue
-
-                # 尝试访问目录，如果权限不足则跳过
-                try:
-                    # 测试是否可访问该目录
-                    os.listdir(dirpath)
-                except (PermissionError, OSError) as e:
-                    continue
-
-                relative_path = os.path.relpath(dirpath, folder_path)
-                depth = relative_path.count(os.sep) if relative_path != '.' else 0
-
-                if relative_path != '.':
-                    md_file.write(f"{'#' * (depth + 3)} 目录: `{relative_path.replace(os.sep, '/')}`\n\n")
 
                 for filename in sorted(filenames):
-                    if filename in IGNORED_ITEMS:
+                    if filename in IGNORED_ITEMS_ALWAYS: continue
+                    file_path = os.path.join(dirpath, filename)
+
+                    if USE_GITIGNORE_CONFIG and git_matcher.is_ignored(file_path):
                         continue
 
-                    _, extension = os.path.splitext(filename)
+                    _, ext = os.path.splitext(filename)
+                    ext_lower = ext.lower()
 
-                    md_file.write(f"{'#' * (depth + 4)} `{filename}`\n\n")
+                    if ext_lower in selected_types or filename in selected_types:  # 支持像 Makefile 这种无后缀匹配
+                        try:
+                            file_size_kb = os.path.getsize(file_path) / 1024
+                            if file_size_kb > MAX_FILE_SIZE_KB:
+                                md_file.write(f"> ⚠️ 文件 `{filename}` 过大 ({file_size_kb:.1f}KB)，已跳过内容。\n\n")
+                                continue
+                        except OSError:
+                            continue
 
-                    if extension.lower() in selected_types:
-                        file_path = os.path.join(dirpath, filename)
-                        language = LANGUAGE_MAP.get(extension.lower(), 'text')
+                        display_rel_path = os.path.relpath(file_path, folder_path).replace(os.sep, '/')
+                        md_file.write(f"#### 📄 `{display_rel_path}`\n\n")
+
+                        language = LANGUAGE_MAP.get(ext_lower, 'text')
+                        # 特殊文件名处理
+                        if filename == 'Dockerfile': language = 'dockerfile'
+                        if filename == 'Makefile': language = 'makefile'
+
                         md_file.write(f"```{language}\n")
+
                         try:
                             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                                md_file.write(f.read())
-                        except (PermissionError, OSError) as e:
-                            md_file.write(f"# 错误: 无法读取文件内容. 原因: {e}")
+                                content = f.read()
+                                if '\0' in content:
+                                    md_file.write(f" (检测到二进制内容，已跳过)\n")
+                                else:
+                                    md_file.write(content)
                         except Exception as e:
-                            md_file.write(f"# 错误: 读取文件时发生意外错误. 原因: {e}")
-                        md_file.write("\n```\n\n")
+                            md_file.write(f"无法读取文件: {e}")
 
-        messagebox.showinfo("成功", f"Markdown 文件已成功生成！\n\n路径: {output_md_path}")
+                        md_file.write("\n```\n\n")
+                        file_count += 1
+                    else:
+                        skipped_count += 1
+
+        summary = f"Markdown 文件已生成！\n\n路径: {output_md_path}\n\n- 包含文件数: {file_count}\n- 忽略/跳过数: {skipped_count}"
+        messagebox.showinfo("完成", summary)
 
     except Exception as e:
-        messagebox.showerror("错误", f"生成过程中发生错误：\n{e}")
+        messagebox.showerror("严重错误", f"发生未捕获异常:\n{e}")
 
+
+if __name__ == "__main__":
+    main_process()
 
 if __name__ == "__main__":
     main_process()
